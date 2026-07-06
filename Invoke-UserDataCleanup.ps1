@@ -231,6 +231,33 @@ function Remove-CustomPaths {
     }
 }
 
+function Get-WslUncRoot {
+    param([string]$Distro)
+
+    $candidates = @(
+        "\\wsl.localhost\$Distro",
+        "\\wsl`$\$Distro"
+    )
+
+    foreach ($root in $candidates) {
+        if (Test-Path -LiteralPath $root) {
+            return $root
+        }
+    }
+
+    return $candidates[0]
+}
+
+function Join-WslPath {
+    param(
+        [string]$Distro,
+        [string]$RelativePath
+    )
+
+    $root = Get-WslUncRoot -Distro $Distro
+    return Join-Path $root $RelativePath
+}
+
 function Has-CleanupItem {
     param([string]$Name)
 
@@ -482,10 +509,10 @@ if (-not $hasCleanupItems -and -not $hasCustomPaths) {
 Write-Log "Cleanup started for user: $TargetUser ; TriggerUser=$TriggerUser ; Items=$($CleanupItems -join ',') ; CustomPaths=$($CustomPaths.Count) ; DryRun=$DryRun"
 
 if (Has-CleanupItem "WslSsh") {
-    Remove-PathSafe -Path "\\wsl.localhost\$WslDistro\home\$WslUser\.ssh" -Section "WslSsh"
+    Remove-PathSafe -Path (Join-WslPath -Distro $WslDistro -RelativePath "home\$WslUser\.ssh") -Section "WslSsh"
 }
 if (Has-CleanupItem "WslBashHistory") {
-    Remove-PathSafe -Path "\\wsl.localhost\$WslDistro\home\$WslUser\.bash_history" -Section "WslBashHistory"
+    Remove-PathSafe -Path (Join-WslPath -Distro $WslDistro -RelativePath "home\$WslUser\.bash_history") -Section "WslBashHistory"
 }
 
 if ($hasCustomPaths) {

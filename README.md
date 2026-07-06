@@ -1,6 +1,13 @@
 # Windows cleanup at logon
 
-PowerShell installer for Windows 11 that creates a Scheduled Task to clean selected data for one user when another user logs on.
+PowerShell installer for Windows 10 and 11 that creates a Scheduled Task to clean selected data for one user when another user logs on.
+
+## Requirements
+
+- Windows 10 or 11
+- PowerShell 5.1 or later
+- Run the installer from an elevated PowerShell session
+- Local user accounts for the trigger and target users
 
 ## Install Without Cloning
 
@@ -48,8 +55,8 @@ When you run the installer again on the same machine, it loads the previous sett
 - Remote Desktop Connection history and related registry keys.
 - Windows user `.ssh` folder.
 - PowerShell PSReadLine history: `ConsoleHost_history.txt`.
-- WSL `.ssh`: `\\wsl.localhost\<distro>\home\<user>\.ssh`.
-- WSL `.bash_history`: `\\wsl.localhost\<distro>\home\<user>\.bash_history`.
+- WSL `.ssh`: `\\wsl.localhost\<distro>\home\<user>\.ssh` (falls back to `\\wsl$\<distro>\...` on older Windows 10 / WSL setups).
+- WSL `.bash_history`: same path pattern as WSL `.ssh`, ending in `.bash_history`.
 - Custom paths: any extra file or folder paths configured during install.
 
 ## Custom Paths and BitLocker
