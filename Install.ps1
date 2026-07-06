@@ -20,6 +20,7 @@ $ErrorActionPreference = "Stop"
 $availableItems = @(
     [pscustomobject]@{ Id = "ChromeProfiles"; Label = "Chrome profiles"; Default = $true },
     [pscustomobject]@{ Id = "EdgeProfiles"; Label = "Microsoft Edge profiles"; Default = $true },
+    [pscustomobject]@{ Id = "BraveProfiles"; Label = "Brave profiles"; Default = $true },
     [pscustomobject]@{ Id = "FirefoxProfiles"; Label = "Firefox / Firefox Developer Edition profiles"; Default = $true },
     [pscustomobject]@{ Id = "RdpHistory"; Label = "Remote Desktop Connection history"; Default = $true },
     [pscustomobject]@{ Id = "WindowsSsh"; Label = "Windows user .ssh folder"; Default = $true },

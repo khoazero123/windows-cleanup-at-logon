@@ -546,6 +546,9 @@ if (Has-CleanupItem "ChromeProfiles") {
 if (Has-CleanupItem "EdgeProfiles") {
     $browserProcesses += @("msedge", "msedge_proxy")
 }
+if (Has-CleanupItem "BraveProfiles") {
+    $browserProcesses += @("brave")
+}
 if (Has-CleanupItem "FirefoxProfiles") {
     $browserProcesses += @("firefox")
 }
@@ -574,6 +577,17 @@ if (Has-CleanupItem "EdgeProfiles") {
     )
     foreach ($path in $edgePaths | Select-Object -Unique) {
         Remove-PathSafe -Path $path -Section "EdgeProfiles"
+    }
+}
+
+if (Has-CleanupItem "BraveProfiles") {
+    $bravePaths = @(
+        (Join-Path $profilePath "AppData\Local\BraveSoftware\Brave-Browser\User Data"),
+        (Join-Path $profilePath "AppData\Local\BraveSoftware\Brave-Browser-Beta\User Data"),
+        (Join-Path $profilePath "AppData\Local\BraveSoftware\Brave-Browser-Nightly\User Data")
+    )
+    foreach ($path in $bravePaths | Select-Object -Unique) {
+        Remove-PathSafe -Path $path -Section "BraveProfiles"
     }
 }
 

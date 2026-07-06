@@ -51,6 +51,7 @@ When you run the installer again on the same machine, it loads the previous sett
 
 - Chrome profiles: Stable, Beta, Dev, and Canary/SxS `User Data`.
 - Microsoft Edge profiles: Stable, Beta, Dev, and Canary/SxS `User Data`.
+- Brave profiles: Stable, Beta, and Nightly `User Data`.
 - Firefox and Firefox Developer Edition profiles, including `dev-edition-default`.
 - Remote Desktop Connection history and related registry keys.
 - Windows user `.ssh` folder.
@@ -82,7 +83,7 @@ The BitLocker password is stored in `config.json` in plain text so the scheduled
   -WebhookUrl "https://example.com/webhook" `
   -CustomPaths "D:\Sensitive\cache","D:\Projects\temp" `
   -BitLockerPassword "your-bitlocker-password" `
-  -CleanupItems ChromeProfiles,EdgeProfiles,FirefoxProfiles,RdpHistory,WindowsSsh,PowerShellHistory,WslSsh,WslBashHistory `
+  -CleanupItems ChromeProfiles,EdgeProfiles,BraveProfiles,FirefoxProfiles,RdpHistory,WindowsSsh,PowerShellHistory,WslSsh,WslBashHistory `
   -SetTriggerUserAsDefaultLogon $true
 ```
 
