@@ -2,7 +2,17 @@
 
 PowerShell installer for Windows 11 that creates a Scheduled Task to clean selected data for one user when another user logs on.
 
-## Install
+## Install Without Cloning
+
+Run PowerShell as Administrator:
+
+```powershell
+irm https://raw.githubusercontent.com/khoazero123/windows-cleanup-at-logon/main/Install.ps1 | iex
+```
+
+This opens the installer UI and downloads the required helper scripts automatically.
+
+## Install From a Cloned Repo
 
 Run PowerShell as Administrator:
 
@@ -62,6 +72,7 @@ Important files:
 - `config.json`: selected users and cleanup sections.
 - `Invoke-UserDataCleanup.ps1`: task runner.
 - `Set-DefaultLogonUser.ps1`: optional helper that keeps the trigger user selected on the Windows login screen.
+- `Uninstall.ps1`: uninstaller copied by the installer.
 - `cleanup.log`: cleanup log.
 - `default-logon-user.log`: default login user log.
 
@@ -70,11 +81,11 @@ Important files:
 Remove the Scheduled Tasks only:
 
 ```powershell
-.\Uninstall.ps1
+C:\ProgramData\WindowsCleanupAtLogon\Uninstall.ps1
 ```
 
 Remove the Scheduled Tasks and installed files:
 
 ```powershell
-.\Uninstall.ps1 -RemoveInstalledFiles
+C:\ProgramData\WindowsCleanupAtLogon\Uninstall.ps1 -RemoveInstalledFiles
 ```

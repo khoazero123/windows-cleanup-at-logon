@@ -8,6 +8,7 @@ param(
     [string]$InstallDir = "C:\ProgramData\WindowsCleanupAtLogon",
     [string]$CleanupTaskName = "Windows cleanup at selected user logon",
     [string]$DefaultLogonTaskName = "Keep selected Windows logon user",
+    [string]$SourceBaseUrl = "https://raw.githubusercontent.com/khoazero123/windows-cleanup-at-logon/main",
     [switch]$NoGui
 )
 
@@ -40,6 +41,37 @@ function Normalize-CleanupItems {
         $normalized += ([string]$item -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     }
     return @($normalized | Select-Object -Unique)
+}
+
+function Get-InstallerSourceRoot {
+    param([string]$BaseUrl)
+
+    $requiredFiles = @(
+        "Invoke-UserDataCleanup.ps1",
+        "Set-DefaultLogonUser.ps1",
+        "Uninstall.ps1"
+    )
+
+    if ($PSScriptRoot) {
+        $missingLocalFiles = @(
+            $requiredFiles |
+                Where-Object { -not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $_)) }
+        )
+        if ($missingLocalFiles.Count -eq 0) {
+            return $PSScriptRoot
+        }
+    }
+
+    $downloadRoot = Join-Path $env:TEMP ("WindowsCleanupAtLogonInstall-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
+
+    foreach ($file in $requiredFiles) {
+        $uri = "$($BaseUrl.TrimEnd('/'))/$file"
+        $destination = Join-Path $downloadRoot $file
+        Invoke-WebRequest -Uri $uri -OutFile $destination -UseBasicParsing -ErrorAction Stop
+    }
+
+    return $downloadRoot
 }
 
 function Get-ConsoleInstallOptions {
@@ -255,14 +287,17 @@ if (-not (Test-Path -LiteralPath $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
+$sourceRoot = Get-InstallerSourceRoot -BaseUrl $SourceBaseUrl
 $cleanupScript = Join-Path $InstallDir "Invoke-UserDataCleanup.ps1"
 $defaultLogonScript = Join-Path $InstallDir "Set-DefaultLogonUser.ps1"
+$uninstallScript = Join-Path $InstallDir "Uninstall.ps1"
 $configPath = Join-Path $InstallDir "config.json"
 $cleanupLogPath = Join-Path $InstallDir "cleanup.log"
 $defaultLogonLogPath = Join-Path $InstallDir "default-logon-user.log"
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Invoke-UserDataCleanup.ps1") -Destination $cleanupScript -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Set-DefaultLogonUser.ps1") -Destination $defaultLogonScript -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot "Invoke-UserDataCleanup.ps1") -Destination $cleanupScript -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot "Set-DefaultLogonUser.ps1") -Destination $defaultLogonScript -Force
+Copy-Item -LiteralPath (Join-Path $sourceRoot "Uninstall.ps1") -Destination $uninstallScript -Force
 
 $config = [ordered]@{
     TriggerUser                 = $TriggerUser
@@ -315,6 +350,7 @@ Write-Host "Cleanup items: $($CleanupItems -join ', ')"
 Write-Host "Install directory: $InstallDir"
 Write-Host "Config: $configPath"
 Write-Host "Cleanup log: $cleanupLogPath"
+Write-Host "Uninstaller: $uninstallScript"
 if ($SetTriggerUserAsDefaultLogon) {
     Write-Host "Installed default-logon task: $DefaultLogonTaskName"
     Write-Host "Default-logon log: $defaultLogonLogPath"
