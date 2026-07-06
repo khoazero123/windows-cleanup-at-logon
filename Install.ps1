@@ -4,6 +4,7 @@ param(
     [string[]]$CleanupItems,
     [string]$WslDistro = "Ubuntu",
     [string]$WslUser = "ubuntu",
+    [string]$WebhookUrl,
     [bool]$SetTriggerUserAsDefaultLogon = $true,
     [string]$InstallDir = "C:\ProgramData\WindowsCleanupAtLogon",
     [string]$CleanupTaskName = "Windows cleanup at selected user logon",
@@ -108,6 +109,10 @@ function Get-ConsoleInstallOptions {
     if ($user) {
         $script:WslUser = $user
     }
+    $webhook = Read-Host "Webhook URL optional, leave blank to disable"
+    if ($webhook) {
+        $script:WebhookUrl = $webhook
+    }
     $defaultLogon = Read-Host "Set trigger user as Windows default login user? [Y/N] default Y"
     if ($defaultLogon) {
         $script:SetTriggerUserAsDefaultLogon = $defaultLogon -match '^(y|yes)$'
@@ -121,7 +126,7 @@ function Show-InstallForm {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Windows cleanup at logon installer"
     $form.Width = 620
-    $form.Height = 560
+    $form.Height = 600
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -183,10 +188,24 @@ function Show-InstallForm {
     $wslUserBox.Text = $WslUser
     $form.Controls.Add($wslUserBox)
 
+    $webhookLabel = New-Object System.Windows.Forms.Label
+    $webhookLabel.Text = "Webhook URL optional"
+    $webhookLabel.Left = 18
+    $webhookLabel.Top = 160
+    $webhookLabel.Width = 260
+    $form.Controls.Add($webhookLabel)
+
+    $webhookBox = New-Object System.Windows.Forms.TextBox
+    $webhookBox.Left = 300
+    $webhookBox.Top = 158
+    $webhookBox.Width = 280
+    $webhookBox.Text = $WebhookUrl
+    $form.Controls.Add($webhookBox)
+
     $group = New-Object System.Windows.Forms.GroupBox
     $group.Text = "Cleanup sections"
     $group.Left = 18
-    $group.Top = 165
+    $group.Top = 200
     $group.Width = 562
     $group.Height = 260
     $form.Controls.Add($group)
@@ -208,7 +227,7 @@ function Show-InstallForm {
     $defaultLogonCheck = New-Object System.Windows.Forms.CheckBox
     $defaultLogonCheck.Text = "Set trigger user as default Windows login user"
     $defaultLogonCheck.Left = 18
-    $defaultLogonCheck.Top = 440
+    $defaultLogonCheck.Top = 475
     $defaultLogonCheck.Width = 420
     $defaultLogonCheck.Checked = $SetTriggerUserAsDefaultLogon
     $form.Controls.Add($defaultLogonCheck)
@@ -216,7 +235,7 @@ function Show-InstallForm {
     $okButton = New-Object System.Windows.Forms.Button
     $okButton.Text = "Install"
     $okButton.Left = 405
-    $okButton.Top = 475
+    $okButton.Top = 510
     $okButton.Width = 82
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.AcceptButton = $okButton
@@ -225,7 +244,7 @@ function Show-InstallForm {
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = "Cancel"
     $cancelButton.Left = 498
-    $cancelButton.Top = 475
+    $cancelButton.Top = 510
     $cancelButton.Width = 82
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $form.CancelButton = $cancelButton
@@ -240,6 +259,7 @@ function Show-InstallForm {
     $script:TargetUser = $targetBox.Text.Trim()
     $script:WslDistro = $wslDistroBox.Text.Trim()
     $script:WslUser = $wslUserBox.Text.Trim()
+    $script:WebhookUrl = $webhookBox.Text.Trim()
     $script:SetTriggerUserAsDefaultLogon = $defaultLogonCheck.Checked
     $script:CleanupItems = @($availableItems | Where-Object { $checkboxes[$_.Id].Checked } | ForEach-Object { $_.Id })
 }
@@ -280,6 +300,17 @@ if (-not $WslDistro) {
 if (-not $WslUser) {
     $WslUser = "ubuntu"
 }
+if ($WebhookUrl) {
+    try {
+        $parsedWebhookUri = [uri]$WebhookUrl
+        if (-not $parsedWebhookUri.IsAbsoluteUri -or $parsedWebhookUri.Scheme -notin @("http", "https")) {
+            throw "Webhook URL must use http or https."
+        }
+    }
+    catch {
+        throw "WebhookUrl must be a valid http or https URL."
+    }
+}
 
 Get-LocalUser -Name $TriggerUser -ErrorAction Stop | Out-Null
 
@@ -305,6 +336,7 @@ $config = [ordered]@{
     CleanupItems                = @($CleanupItems)
     WslDistro                   = $WslDistro
     WslUser                     = $WslUser
+    WebhookUrl                  = $WebhookUrl
     LogPath                     = $cleanupLogPath
     SetTriggerUserAsDefaultLogon = [bool]$SetTriggerUserAsDefaultLogon
 }
@@ -351,6 +383,12 @@ Write-Host "Install directory: $InstallDir"
 Write-Host "Config: $configPath"
 Write-Host "Cleanup log: $cleanupLogPath"
 Write-Host "Uninstaller: $uninstallScript"
+if ($WebhookUrl) {
+    Write-Host "Webhook notifications: enabled"
+}
+else {
+    Write-Host "Webhook notifications: disabled"
+}
 if ($SetTriggerUserAsDefaultLogon) {
     Write-Host "Installed default-logon task: $DefaultLogonTaskName"
     Write-Host "Default-logon log: $defaultLogonLogPath"

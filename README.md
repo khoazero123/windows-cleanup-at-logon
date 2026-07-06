@@ -27,6 +27,7 @@ The installer asks for:
 - Target username: the user whose data should be cleaned.
 - Cleanup sections to enable.
 - WSL distro and username for WSL paths.
+- Optional webhook URL for cleanup completion notifications.
 - Whether to keep the trigger user selected as the default Windows login user.
 
 If the GUI cannot open, run the console installer:
@@ -55,9 +56,21 @@ If the GUI cannot open, run the console installer:
   -TargetUser "khoatest" `
   -WslDistro "Ubuntu" `
   -WslUser "ubuntu" `
+  -WebhookUrl "https://example.com/webhook" `
   -CleanupItems ChromeProfiles,EdgeProfiles,FirefoxProfiles,RdpHistory,WindowsSsh,PowerShellHistory,WslSsh,WslBashHistory `
   -SetTriggerUserAsDefaultLogon $true
 ```
+
+## Webhook Payload
+
+If a webhook URL is configured, the cleanup runner sends an HTTP POST with JSON after each run. The payload includes:
+
+- `event`: `windows_cleanup_at_logon.completed`.
+- `status`: `completed`, `completed_with_skips`, or `skipped`.
+- `machine`, `triggerUser`, `targetUser`, `cleanupItems`, `wslDistro`, `wslUser`, and `dryRun`.
+- `startedAt` and `finishedAt` timestamps.
+- `summary`: counts grouped by cleanup result status.
+- `results`: per-path and per-registry-key cleanup details.
 
 ## Installed Files
 
