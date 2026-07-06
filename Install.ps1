@@ -2,6 +2,8 @@ param(
     [string]$TriggerUser,
     [string]$TargetUser,
     [string[]]$CleanupItems,
+    [string[]]$CustomPaths,
+    [string]$BitLockerPassword,
     [string]$WslDistro = "Ubuntu",
     [string]$WslUser = "ubuntu",
     [string]$WebhookUrl,
@@ -42,6 +44,134 @@ function Normalize-CleanupItems {
         $normalized += ([string]$item -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     }
     return @($normalized | Select-Object -Unique)
+}
+
+function Normalize-CustomPaths {
+    param([string[]]$Paths)
+
+    $normalized = @()
+    foreach ($entry in @($Paths)) {
+        if ($null -eq $entry) {
+            continue
+        }
+        $normalized += (
+            [string]$entry -split "[\r\n,]" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ }
+        )
+    }
+    return @($normalized | Select-Object -Unique)
+}
+
+function Get-DriveLettersFromPaths {
+    param([string[]]$Paths)
+
+    $letters = @()
+    foreach ($path in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $root = [System.IO.Path]::GetPathRoot($path.Trim())
+        if ($root -match '^([A-Za-z]):\\$') {
+            $letters += ($matches[1].ToUpperInvariant() + ':')
+        }
+    }
+    return @($letters | Select-Object -Unique)
+}
+
+function Get-BitLockerVolumeSnapshot {
+    param([string]$MountPoint)
+
+    $snapshot = [pscustomobject]@{
+        MountPoint = $MountPoint
+        Available  = $false
+        Protected  = $false
+        AutoUnlock = $false
+        Locked     = $false
+    }
+
+    if (-not (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)) {
+        return $snapshot
+    }
+
+    try {
+        $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
+        $snapshot.Available = $true
+        $snapshot.Protected = ($volume.ProtectionStatus -eq 'On')
+        $snapshot.Locked = ($volume.LockStatus -eq 'Locked')
+
+        foreach ($protector in @($volume.KeyProtector)) {
+            if ($protector.KeyProtectorType -eq 'AutoUnlock') {
+                $snapshot.AutoUnlock = $true
+                break
+            }
+        }
+    }
+    catch {
+        return $snapshot
+    }
+
+    return $snapshot
+}
+
+function Get-BitLockerPathWarnings {
+    param(
+        [string[]]$Paths,
+        [string]$BitLockerPassword
+    )
+
+    $warnings = @()
+    if (-not $Paths -or $Paths.Count -eq 0) {
+        return $warnings
+    }
+    if ($BitLockerPassword) {
+        return $warnings
+    }
+
+    foreach ($letter in Get-DriveLettersFromPaths -Paths $Paths) {
+        $mountPoint = "$letter\"
+        $snapshot = Get-BitLockerVolumeSnapshot -MountPoint $mountPoint
+        if ($snapshot.Available -and $snapshot.Protected -and -not $snapshot.AutoUnlock) {
+            $warnings += "Drive ${letter} has BitLocker enabled without auto-unlock. Custom paths on this drive may be skipped while the volume is locked. Provide an optional BitLocker password to unlock it during cleanup."
+        }
+    }
+
+    return $warnings
+}
+
+function Show-BitLockerPathWarnings {
+    param(
+        [string[]]$Paths,
+        [string]$BitLockerPassword,
+        [switch]$UseGui
+    )
+
+    $warnings = Get-BitLockerPathWarnings -Paths $Paths -BitLockerPassword $BitLockerPassword
+    if ($warnings.Count -eq 0) {
+        return
+    }
+
+    $message = ($warnings -join [Environment]::NewLine + [Environment]::NewLine) +
+        [Environment]::NewLine + [Environment]::NewLine +
+        "Installation will continue."
+
+    if ($UseGui) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [void][System.Windows.Forms.MessageBox]::Show(
+            $message,
+            "BitLocker warning",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+    }
+    else {
+        Write-Warning "BitLocker warnings for custom paths:"
+        foreach ($warning in $warnings) {
+            Write-Warning $warning
+        }
+        Write-Warning "Installation will continue."
+    }
 }
 
 function Get-InstallerSourceRoot {
@@ -137,16 +267,37 @@ function Get-ConsoleInstallOptions {
     if ($defaultLogon) {
         $script:SetTriggerUserAsDefaultLogon = $defaultLogon -match '^(y|yes)$'
     }
+
+    if (-not $script:CustomPaths -or $script:CustomPaths.Count -eq 0) {
+        Write-Host "Additional paths to delete (one per line; empty line to finish):"
+        $pathLines = @()
+        do {
+            $line = Read-Host "  Path"
+            if ($line) {
+                $pathLines += $line
+            }
+        } while ($line)
+        $script:CustomPaths = Normalize-CustomPaths -Paths $pathLines
+    }
+
+    if (-not $PSBoundParameters.ContainsKey('BitLockerPassword')) {
+        $bitLockerAnswer = Read-Host "BitLocker password for locked custom-path drives optional, leave blank to skip"
+        if ($bitLockerAnswer) {
+            $script:BitLockerPassword = $bitLockerAnswer
+        }
+    }
 }
 
 function Show-InstallForm {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
+    $initialCustomPaths = if ($CustomPaths) { ($CustomPaths -join [Environment]::NewLine) } else { "" }
+
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "Windows cleanup at logon installer"
     $form.Width = 620
-    $form.Height = 600
+    $form.Height = 720
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
     $form.MaximizeBox = $false
@@ -225,9 +376,9 @@ function Show-InstallForm {
     $group = New-Object System.Windows.Forms.GroupBox
     $group.Text = "Cleanup sections"
     $group.Left = 18
-    $group.Top = 200
+    $group.Top = 195
     $group.Width = 562
-    $group.Height = 260
+    $group.Height = 235
     $form.Controls.Add($group)
 
     $checkboxes = @{}
@@ -244,10 +395,43 @@ function Show-InstallForm {
         $top += 27
     }
 
+    $customPathsGroup = New-Object System.Windows.Forms.GroupBox
+    $customPathsGroup.Text = "Additional paths to delete (one per line)"
+    $customPathsGroup.Left = 18
+    $customPathsGroup.Top = 440
+    $customPathsGroup.Width = 562
+    $customPathsGroup.Height = 120
+    $form.Controls.Add($customPathsGroup)
+
+    $customPathsBox = New-Object System.Windows.Forms.TextBox
+    $customPathsBox.Left = 18
+    $customPathsBox.Top = 24
+    $customPathsBox.Width = 526
+    $customPathsBox.Height = 82
+    $customPathsBox.Multiline = $true
+    $customPathsBox.ScrollBars = "Vertical"
+    $customPathsBox.Text = $initialCustomPaths
+    $customPathsGroup.Controls.Add($customPathsBox)
+
+    $bitLockerLabel = New-Object System.Windows.Forms.Label
+    $bitLockerLabel.Text = "BitLocker password optional"
+    $bitLockerLabel.Left = 18
+    $bitLockerLabel.Top = 570
+    $bitLockerLabel.Width = 260
+    $form.Controls.Add($bitLockerLabel)
+
+    $bitLockerPasswordBox = New-Object System.Windows.Forms.TextBox
+    $bitLockerPasswordBox.Left = 300
+    $bitLockerPasswordBox.Top = 568
+    $bitLockerPasswordBox.Width = 280
+    $bitLockerPasswordBox.UseSystemPasswordChar = $true
+    $bitLockerPasswordBox.Text = $BitLockerPassword
+    $form.Controls.Add($bitLockerPasswordBox)
+
     $defaultLogonCheck = New-Object System.Windows.Forms.CheckBox
     $defaultLogonCheck.Text = "Set trigger user as default Windows login user"
     $defaultLogonCheck.Left = 18
-    $defaultLogonCheck.Top = 475
+    $defaultLogonCheck.Top = 605
     $defaultLogonCheck.Width = 420
     $defaultLogonCheck.Checked = $SetTriggerUserAsDefaultLogon
     $form.Controls.Add($defaultLogonCheck)
@@ -255,7 +439,7 @@ function Show-InstallForm {
     $okButton = New-Object System.Windows.Forms.Button
     $okButton.Text = "Install"
     $okButton.Left = 405
-    $okButton.Top = 510
+    $okButton.Top = 640
     $okButton.Width = 82
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.AcceptButton = $okButton
@@ -264,7 +448,7 @@ function Show-InstallForm {
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = "Cancel"
     $cancelButton.Left = 498
-    $cancelButton.Top = 510
+    $cancelButton.Top = 640
     $cancelButton.Width = 82
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $form.CancelButton = $cancelButton
@@ -282,15 +466,19 @@ function Show-InstallForm {
     $script:WebhookUrl = $webhookBox.Text.Trim()
     $script:SetTriggerUserAsDefaultLogon = $defaultLogonCheck.Checked
     $script:CleanupItems = @($availableItems | Where-Object { $checkboxes[$_.Id].Checked } | ForEach-Object { $_.Id })
+    $script:CustomPaths = Normalize-CustomPaths -Paths ($customPathsBox.Text -split "`r?`n")
+    $script:BitLockerPassword = $bitLockerPasswordBox.Text
 }
 
 if (-not (Test-IsAdministrator)) {
     throw "Run this installer from an elevated PowerShell session."
 }
 
+$usedGui = $false
 if (-not $NoGui) {
     try {
         Show-InstallForm
+        $usedGui = $true
     }
     catch {
         if ($_.Exception.Message -eq "Installation canceled.") {
@@ -303,6 +491,9 @@ if (-not $NoGui) {
 else {
     Get-ConsoleInstallOptions
 }
+
+$CustomPaths = Normalize-CustomPaths -Paths $CustomPaths
+Show-BitLockerPathWarnings -Paths $CustomPaths -BitLockerPassword $BitLockerPassword -UseGui:$usedGui
 
 if (-not $TriggerUser) {
     throw "TriggerUser is required."
@@ -357,13 +548,15 @@ finally {
 }
 
 $config = [ordered]@{
-    TriggerUser                 = $TriggerUser
-    TargetUser                  = $TargetUser
-    CleanupItems                = @($CleanupItems)
-    WslDistro                   = $WslDistro
-    WslUser                     = $WslUser
-    WebhookUrl                  = $WebhookUrl
-    LogPath                     = $cleanupLogPath
+    TriggerUser                  = $TriggerUser
+    TargetUser                   = $TargetUser
+    CleanupItems                 = @($CleanupItems)
+    CustomPaths                  = @($CustomPaths)
+    BitLockerPassword            = $BitLockerPassword
+    WslDistro                    = $WslDistro
+    WslUser                      = $WslUser
+    WebhookUrl                   = $WebhookUrl
+    LogPath                      = $cleanupLogPath
     SetTriggerUserAsDefaultLogon = [bool]$SetTriggerUserAsDefaultLogon
 }
 $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
@@ -405,6 +598,12 @@ Write-Host "Installed cleanup task: $CleanupTaskName"
 Write-Host "Trigger user: $TriggerUser"
 Write-Host "Target user: $TargetUser"
 Write-Host "Cleanup items: $($CleanupItems -join ', ')"
+if ($CustomPaths -and $CustomPaths.Count -gt 0) {
+    Write-Host "Custom paths: $($CustomPaths.Count) configured"
+}
+if ($BitLockerPassword) {
+    Write-Host "BitLocker unlock password: configured"
+}
 Write-Host "Install directory: $InstallDir"
 Write-Host "Config: $configPath"
 Write-Host "Cleanup log: $cleanupLogPath"

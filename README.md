@@ -28,6 +28,8 @@ The installer asks for:
 - Cleanup sections to enable.
 - WSL distro and username for WSL paths.
 - Optional webhook URL for cleanup completion notifications.
+- Additional file or folder paths to delete (one per line in the GUI).
+- Optional BitLocker password to unlock non-auto-unlock drives before custom-path cleanup.
 - Whether to keep the trigger user selected as the default Windows login user.
 
 If the GUI cannot open, run the console installer:
@@ -46,6 +48,18 @@ If the GUI cannot open, run the console installer:
 - PowerShell PSReadLine history: `ConsoleHost_history.txt`.
 - WSL `.ssh`: `\\wsl.localhost\<distro>\home\<user>\.ssh`.
 - WSL `.bash_history`: `\\wsl.localhost\<distro>\home\<user>\.bash_history`.
+- Custom paths: any extra file or folder paths configured during install.
+
+## Custom Paths and BitLocker
+
+During install, you can list extra paths to delete (one per line). On save, the installer checks each drive letter in those paths:
+
+- If a drive has BitLocker enabled **without** auto-unlock and no BitLocker password was provided, a warning is shown.
+- Installation still completes successfully after the warning.
+
+At cleanup time, if a BitLocker password is configured, the task tries to unlock locked volumes before deleting custom paths. The same password is used for every protected drive referenced by your custom paths.
+
+The BitLocker password is stored in `config.json` in plain text so the scheduled task can run unattended. Restrict access to `C:\ProgramData\WindowsCleanupAtLogon`.
 
 ## Non-interactive Install Example
 
@@ -57,6 +71,8 @@ If the GUI cannot open, run the console installer:
   -WslDistro "Ubuntu" `
   -WslUser "ubuntu" `
   -WebhookUrl "https://example.com/webhook" `
+  -CustomPaths "D:\Sensitive\cache","D:\Projects\temp" `
+  -BitLockerPassword "your-bitlocker-password" `
   -CleanupItems ChromeProfiles,EdgeProfiles,FirefoxProfiles,RdpHistory,WindowsSsh,PowerShellHistory,WslSsh,WslBashHistory `
   -SetTriggerUserAsDefaultLogon $true
 ```
@@ -67,7 +83,7 @@ If a webhook URL is configured, the cleanup runner sends an HTTP POST with JSON 
 
 - `event`: `windows_cleanup_at_logon.completed`.
 - `status`: `completed`, `completed_with_skips`, or `skipped`.
-- `machine`, `triggerUser`, `targetUser`, `cleanupItems`, `wslDistro`, `wslUser`, and `dryRun`.
+- `machine`, `triggerUser`, `targetUser`, `cleanupItems`, `customPaths`, `wslDistro`, `wslUser`, and `dryRun`.
 - `startedAt` and `finishedAt` timestamps.
 - `summary`: counts grouped by cleanup result status.
 - `results`: per-path and per-registry-key cleanup details.

@@ -3,6 +3,8 @@ param(
     [string]$TriggerUser,
     [string]$TargetUser,
     [string[]]$CleanupItems,
+    [string[]]$CustomPaths,
+    [string]$BitLockerPassword,
     [string]$WslDistro = "Ubuntu",
     [string]$WslUser = "ubuntu",
     [string]$WebhookUrl,
@@ -74,6 +76,12 @@ function Import-CleanupConfig {
     if ($config.LogPath) {
         $script:LogPath = [string]$config.LogPath
     }
+    if ($config.CustomPaths) {
+        $script:CustomPaths = @($config.CustomPaths | ForEach-Object { [string]$_ })
+    }
+    if ($config.PSObject.Properties.Name -contains 'BitLockerPassword' -and $config.BitLockerPassword) {
+        $script:BitLockerPassword = [string]$config.BitLockerPassword
+    }
 }
 
 function Normalize-CleanupItems {
@@ -87,6 +95,140 @@ function Normalize-CleanupItems {
         $normalized += ([string]$item -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     }
     return @($normalized | Select-Object -Unique)
+}
+
+function Normalize-CustomPaths {
+    param([string[]]$Paths)
+
+    $normalized = @()
+    foreach ($entry in @($Paths)) {
+        if ($null -eq $entry) {
+            continue
+        }
+        $normalized += (
+            [string]$entry -split "[\r\n,]" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ }
+        )
+    }
+    return @($normalized | Select-Object -Unique)
+}
+
+function Get-DriveLettersFromPaths {
+    param([string[]]$Paths)
+
+    $letters = @()
+    foreach ($path in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $root = [System.IO.Path]::GetPathRoot($path.Trim())
+        if ($root -match '^([A-Za-z]):\\$') {
+            $letters += ($matches[1].ToUpperInvariant() + ':')
+        }
+    }
+    return @($letters | Select-Object -Unique)
+}
+
+function Get-BitLockerVolumeSnapshot {
+    param([string]$MountPoint)
+
+    $snapshot = [pscustomobject]@{
+        MountPoint = $MountPoint
+        Available  = $false
+        Protected  = $false
+        AutoUnlock = $false
+        Locked     = $false
+    }
+
+    if (-not (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)) {
+        return $snapshot
+    }
+
+    try {
+        $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
+        $snapshot.Available = $true
+        $snapshot.Protected = ($volume.ProtectionStatus -eq 'On')
+        $snapshot.Locked = ($volume.LockStatus -eq 'Locked')
+
+        foreach ($protector in @($volume.KeyProtector)) {
+            if ($protector.KeyProtectorType -eq 'AutoUnlock') {
+                $snapshot.AutoUnlock = $true
+                break
+            }
+        }
+    }
+    catch {
+        return $snapshot
+    }
+
+    return $snapshot
+}
+
+function Unlock-BitLockerVolumesForPaths {
+    param(
+        [string[]]$Paths,
+        [string]$Password
+    )
+
+    if (-not $Password) {
+        return
+    }
+    if (-not (Get-Command Unlock-BitLocker -ErrorAction SilentlyContinue)) {
+        Write-Log "BitLocker unlock skipped; Unlock-BitLocker cmdlet is unavailable"
+        Add-CleanupResult -Section "BitLocker" -Target "Unlock-BitLocker" -Status "skipped" -Message "BitLocker cmdlet unavailable"
+        return
+    }
+
+    $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+    foreach ($letter in Get-DriveLettersFromPaths -Paths $Paths) {
+        $mountPoint = "$letter\"
+        $snapshot = Get-BitLockerVolumeSnapshot -MountPoint $mountPoint
+        if (-not $snapshot.Available -or -not $snapshot.Protected) {
+            continue
+        }
+        if (-not $snapshot.Locked) {
+            Write-Log "BitLocker volume already unlocked: $mountPoint"
+            Add-CleanupResult -Section "BitLocker" -Target $mountPoint -Status "skipped" -Message "Volume already unlocked"
+            continue
+        }
+
+        if ($DryRun) {
+            Write-Log "DryRun unlock BitLocker volume: $mountPoint"
+            Add-CleanupResult -Section "BitLocker" -Target $mountPoint -Status "dry_run" -Message "Volume would be unlocked"
+            continue
+        }
+
+        try {
+            Unlock-BitLocker -MountPoint $mountPoint -Password $securePassword -ErrorAction Stop | Out-Null
+            Write-Log "Unlocked BitLocker volume: $mountPoint"
+            Add-CleanupResult -Section "BitLocker" -Target $mountPoint -Status "unlocked" -Message "Volume unlocked"
+        }
+        catch {
+            Write-Log "Failed to unlock BitLocker volume ${mountPoint}: $($_.Exception.Message)"
+            Add-CleanupResult -Section "BitLocker" -Target $mountPoint -Status "failed" -Message $_.Exception.Message
+        }
+    }
+}
+
+function Remove-CustomPaths {
+    param([string[]]$Paths)
+
+    foreach ($path in @($Paths)) {
+        $snapshot = $null
+        $root = [System.IO.Path]::GetPathRoot($path.Trim())
+        if ($root -match '^([A-Za-z]):\\$') {
+            $snapshot = Get-BitLockerVolumeSnapshot -MountPoint $root
+            if ($snapshot.Available -and $snapshot.Protected -and $snapshot.Locked) {
+                Write-Log "Skip custom path on locked BitLocker volume: $path"
+                Add-CleanupResult -Section "CustomPaths" -Target $path -Status "skipped_locked" -Message "BitLocker volume is locked"
+                continue
+            }
+        }
+
+        Remove-PathSafe -Path $path -Section "CustomPaths"
+    }
 }
 
 function Has-CleanupItem {
@@ -116,6 +258,7 @@ function Send-CleanupWebhook {
             triggerUser  = $TriggerUser
             targetUser   = $TargetUser
             cleanupItems = @($CleanupItems)
+            customPaths  = @($CustomPaths)
             wslDistro    = $WslDistro
             wslUser      = $WslUser
             dryRun       = [bool]$DryRun
@@ -321,24 +464,39 @@ function Resolve-TargetProfile {
 
 Import-CleanupConfig -Path $ConfigPath
 $CleanupItems = Normalize-CleanupItems -Items $CleanupItems
+$CustomPaths = Normalize-CustomPaths -Paths $CustomPaths
 
 if (-not $TargetUser) {
     throw "TargetUser is required."
 }
-if (-not $CleanupItems -or $CleanupItems.Count -eq 0) {
-    Write-Log "No cleanup items selected; exiting"
-    Add-CleanupResult -Section "Config" -Target "CleanupItems" -Status "skipped" -Message "No cleanup items selected"
+
+$hasCleanupItems = $CleanupItems -and $CleanupItems.Count -gt 0
+$hasCustomPaths = $CustomPaths -and $CustomPaths.Count -gt 0
+if (-not $hasCleanupItems -and -not $hasCustomPaths) {
+    Write-Log "No cleanup items or custom paths configured; exiting"
+    Add-CleanupResult -Section "Config" -Target "CleanupItems" -Status "skipped" -Message "No cleanup items or custom paths configured"
     Send-CleanupWebhook -Status "skipped"
     exit 0
 }
 
-Write-Log "Cleanup started for user: $TargetUser ; TriggerUser=$TriggerUser ; Items=$($CleanupItems -join ',') ; DryRun=$DryRun"
+Write-Log "Cleanup started for user: $TargetUser ; TriggerUser=$TriggerUser ; Items=$($CleanupItems -join ',') ; CustomPaths=$($CustomPaths.Count) ; DryRun=$DryRun"
 
 if (Has-CleanupItem "WslSsh") {
     Remove-PathSafe -Path "\\wsl.localhost\$WslDistro\home\$WslUser\.ssh" -Section "WslSsh"
 }
 if (Has-CleanupItem "WslBashHistory") {
     Remove-PathSafe -Path "\\wsl.localhost\$WslDistro\home\$WslUser\.bash_history" -Section "WslBashHistory"
+}
+
+if ($hasCustomPaths) {
+    Unlock-BitLockerVolumesForPaths -Paths $CustomPaths -Password $BitLockerPassword
+    Remove-CustomPaths -Paths $CustomPaths
+}
+
+if (-not $hasCleanupItems) {
+    Write-Log "Cleanup finished for user: $TargetUser"
+    Send-CleanupWebhook -Status "completed"
+    exit 0
 }
 
 $profile = Resolve-TargetProfile -UserName $TargetUser
