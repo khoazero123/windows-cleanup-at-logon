@@ -59,20 +59,40 @@ function Get-InstallerSourceRoot {
                 Where-Object { -not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $_)) }
         )
         if ($missingLocalFiles.Count -eq 0) {
-            return $PSScriptRoot
+            return [pscustomobject]@{
+                Path        = $PSScriptRoot
+                IsTemporary = $false
+            }
         }
     }
 
     $downloadRoot = Join-Path $env:TEMP ("WindowsCleanupAtLogonInstall-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 
-    foreach ($file in $requiredFiles) {
-        $uri = "$($BaseUrl.TrimEnd('/'))/$file"
-        $destination = Join-Path $downloadRoot $file
-        Invoke-WebRequest -Uri $uri -OutFile $destination -UseBasicParsing -ErrorAction Stop
+    try {
+        foreach ($file in $requiredFiles) {
+            $uri = "$($BaseUrl.TrimEnd('/'))/$file"
+            $destination = Join-Path $downloadRoot $file
+            Invoke-WebRequest -Uri $uri -OutFile $destination -UseBasicParsing -ErrorAction Stop
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
+        throw
     }
 
-    return $downloadRoot
+    return [pscustomobject]@{
+        Path        = $downloadRoot
+        IsTemporary = $true
+    }
+}
+
+function Remove-TemporarySourceRoot {
+    param([pscustomobject]$Source)
+
+    if ($Source -and $Source.IsTemporary -and $Source.Path -and (Test-Path -LiteralPath $Source.Path)) {
+        Remove-Item -LiteralPath $Source.Path -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-ConsoleInstallOptions {
@@ -318,7 +338,7 @@ if (-not (Test-Path -LiteralPath $InstallDir)) {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 }
 
-$sourceRoot = Get-InstallerSourceRoot -BaseUrl $SourceBaseUrl
+$source = $null
 $cleanupScript = Join-Path $InstallDir "Invoke-UserDataCleanup.ps1"
 $defaultLogonScript = Join-Path $InstallDir "Set-DefaultLogonUser.ps1"
 $uninstallScript = Join-Path $InstallDir "Uninstall.ps1"
@@ -326,9 +346,15 @@ $configPath = Join-Path $InstallDir "config.json"
 $cleanupLogPath = Join-Path $InstallDir "cleanup.log"
 $defaultLogonLogPath = Join-Path $InstallDir "default-logon-user.log"
 
-Copy-Item -LiteralPath (Join-Path $sourceRoot "Invoke-UserDataCleanup.ps1") -Destination $cleanupScript -Force
-Copy-Item -LiteralPath (Join-Path $sourceRoot "Set-DefaultLogonUser.ps1") -Destination $defaultLogonScript -Force
-Copy-Item -LiteralPath (Join-Path $sourceRoot "Uninstall.ps1") -Destination $uninstallScript -Force
+try {
+    $source = Get-InstallerSourceRoot -BaseUrl $SourceBaseUrl
+    Copy-Item -LiteralPath (Join-Path $source.Path "Invoke-UserDataCleanup.ps1") -Destination $cleanupScript -Force
+    Copy-Item -LiteralPath (Join-Path $source.Path "Set-DefaultLogonUser.ps1") -Destination $defaultLogonScript -Force
+    Copy-Item -LiteralPath (Join-Path $source.Path "Uninstall.ps1") -Destination $uninstallScript -Force
+}
+finally {
+    Remove-TemporarySourceRoot -Source $source
+}
 
 $config = [ordered]@{
     TriggerUser                 = $TriggerUser
