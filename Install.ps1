@@ -174,6 +174,62 @@ function Show-BitLockerPathWarnings {
     }
 }
 
+function Import-SavedInstallerConfig {
+    param(
+        [string]$Path,
+        [hashtable]$BoundParameters
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    try {
+        $saved = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        Write-Warning "Could not load saved installer settings from ${Path}: $($_.Exception.Message)"
+        return $false
+    }
+
+    if (-not $BoundParameters.ContainsKey('TriggerUser') -and $saved.TriggerUser) {
+        $script:TriggerUser = [string]$saved.TriggerUser
+    }
+    if (-not $BoundParameters.ContainsKey('TargetUser') -and $saved.TargetUser) {
+        $script:TargetUser = [string]$saved.TargetUser
+    }
+    if (-not $BoundParameters.ContainsKey('CleanupItems') -and $saved.CleanupItems) {
+        $script:CleanupItems = @(Normalize-CleanupItems -Items @($saved.CleanupItems | ForEach-Object { [string]$_ }))
+    }
+    if (-not $BoundParameters.ContainsKey('CustomPaths') -and $saved.CustomPaths) {
+        $script:CustomPaths = @(Normalize-CustomPaths -Paths @($saved.CustomPaths | ForEach-Object { [string]$_ }))
+    }
+    if (
+        -not $BoundParameters.ContainsKey('BitLockerPassword') -and
+        ($saved.PSObject.Properties.Name -contains 'BitLockerPassword') -and
+        $saved.BitLockerPassword
+    ) {
+        $script:BitLockerPassword = [string]$saved.BitLockerPassword
+    }
+    if (-not $BoundParameters.ContainsKey('WslDistro') -and $saved.WslDistro) {
+        $script:WslDistro = [string]$saved.WslDistro
+    }
+    if (-not $BoundParameters.ContainsKey('WslUser') -and $saved.WslUser) {
+        $script:WslUser = [string]$saved.WslUser
+    }
+    if (-not $BoundParameters.ContainsKey('WebhookUrl') -and $saved.WebhookUrl) {
+        $script:WebhookUrl = [string]$saved.WebhookUrl
+    }
+    if (
+        -not $BoundParameters.ContainsKey('SetTriggerUserAsDefaultLogon') -and
+        ($saved.PSObject.Properties.Name -contains 'SetTriggerUserAsDefaultLogon')
+    ) {
+        $script:SetTriggerUserAsDefaultLogon = [bool]$saved.SetTriggerUserAsDefaultLogon
+    }
+
+    return $true
+}
+
 function Get-InstallerSourceRoot {
     param([string]$BaseUrl)
 
@@ -236,10 +292,14 @@ function Get-ConsoleInstallOptions {
     if (-not $script:CleanupItems -or $script:CleanupItems.Count -eq 0) {
         $selected = @()
         foreach ($item in $availableItems) {
-            $defaultText = if ($item.Default) { "Y" } else { "N" }
+            $savedEnabled = $false
+            if ($script:CleanupItems) {
+                $savedEnabled = @($script:CleanupItems) -contains $item.Id
+            }
+            $defaultText = if ($savedEnabled) { "Y" } elseif ($item.Default) { "Y" } else { "N" }
             $answer = Read-Host "$($item.Label)? [Y/N] default $defaultText"
             if (-not $answer) {
-                $enabled = $item.Default
+                $enabled = $savedEnabled -or $item.Default
             }
             else {
                 $enabled = $answer -match '^(y|yes)$'
@@ -259,11 +319,16 @@ function Get-ConsoleInstallOptions {
     if ($user) {
         $script:WslUser = $user
     }
-    $webhook = Read-Host "Webhook URL optional, leave blank to disable"
+    $webhookPrompt = "Webhook URL optional"
+    if ($script:WebhookUrl) {
+        $webhookPrompt += " default [$script:WebhookUrl]"
+    }
+    $webhook = Read-Host $webhookPrompt
     if ($webhook) {
         $script:WebhookUrl = $webhook
     }
-    $defaultLogon = Read-Host "Set trigger user as Windows default login user? [Y/N] default Y"
+    $defaultLogonDefault = if ($script:SetTriggerUserAsDefaultLogon) { "Y" } else { "N" }
+    $defaultLogon = Read-Host "Set trigger user as Windows default login user? [Y/N] default $defaultLogonDefault"
     if ($defaultLogon) {
         $script:SetTriggerUserAsDefaultLogon = $defaultLogon -match '^(y|yes)$'
     }
@@ -277,14 +342,22 @@ function Get-ConsoleInstallOptions {
                 $pathLines += $line
             }
         } while ($line)
-        $script:CustomPaths = Normalize-CustomPaths -Paths $pathLines
+        if ($pathLines.Count -gt 0) {
+            $script:CustomPaths = Normalize-CustomPaths -Paths $pathLines
+        }
+    }
+    else {
+        Write-Host "Using saved custom paths: $($script:CustomPaths.Count)"
     }
 
-    if (-not $PSBoundParameters.ContainsKey('BitLockerPassword')) {
+    if (-not $PSBoundParameters.ContainsKey('BitLockerPassword') -and [string]::IsNullOrEmpty($script:BitLockerPassword)) {
         $bitLockerAnswer = Read-Host "BitLocker password for locked custom-path drives optional, leave blank to skip"
         if ($bitLockerAnswer) {
             $script:BitLockerPassword = $bitLockerAnswer
         }
+    }
+    elseif ($script:BitLockerPassword) {
+        Write-Host "Using saved BitLocker password."
     }
 }
 
@@ -474,6 +547,11 @@ if (-not (Test-IsAdministrator)) {
     throw "Run this installer from an elevated PowerShell session."
 }
 
+$savedConfigPath = Join-Path $InstallDir "config.json"
+if (Import-SavedInstallerConfig -Path $savedConfigPath -BoundParameters $PSBoundParameters) {
+    Write-Host "Loaded previous installer settings from: $savedConfigPath"
+}
+
 $usedGui = $false
 if (-not $NoGui) {
     try {
@@ -558,6 +636,7 @@ $config = [ordered]@{
     WebhookUrl                   = $WebhookUrl
     LogPath                      = $cleanupLogPath
     SetTriggerUserAsDefaultLogon = [bool]$SetTriggerUserAsDefaultLogon
+    SavedAt                      = (Get-Date).ToString("o")
 }
 $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
 

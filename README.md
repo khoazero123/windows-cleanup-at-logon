@@ -38,6 +38,8 @@ If the GUI cannot open, run the console installer:
 .\Install.ps1 -NoGui
 ```
 
+When you run the installer again on the same machine, it loads the previous settings from `C:\ProgramData\WindowsCleanupAtLogon\config.json` and pre-fills the form or console prompts. Command-line parameters still override saved values.
+
 ## Cleanup Sections
 
 - Chrome profiles: Stable, Beta, Dev, and Canary/SxS `User Data`.
@@ -98,7 +100,7 @@ C:\ProgramData\WindowsCleanupAtLogon
 
 Important files:
 
-- `config.json`: selected users and cleanup sections.
+- `config.json`: selected users, cleanup sections, custom paths, and installer settings. Re-running the installer loads this file as defaults.
 - `Invoke-UserDataCleanup.ps1`: task runner.
 - `Set-DefaultLogonUser.ps1`: optional helper that keeps the trigger user selected on the Windows login screen.
 - `Uninstall.ps1`: uninstaller copied by the installer.
