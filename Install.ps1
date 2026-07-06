@@ -452,19 +452,27 @@ function Show-InstallForm {
     $group.Left = 18
     $group.Top = 195
     $group.Width = 562
-    $group.Height = 235
+    $group.Height = 200
     $form.Controls.Add($group)
 
+    $cleanupScrollPanel = New-Object System.Windows.Forms.Panel
+    $cleanupScrollPanel.Left = 12
+    $cleanupScrollPanel.Top = 20
+    $cleanupScrollPanel.Width = 538
+    $cleanupScrollPanel.Height = 168
+    $cleanupScrollPanel.AutoScroll = $true
+    $group.Controls.Add($cleanupScrollPanel)
+
     $checkboxes = @{}
-    $top = 28
+    $top = 4
     foreach ($item in $availableItems) {
         $checkbox = New-Object System.Windows.Forms.CheckBox
         $checkbox.Text = $item.Label
-        $checkbox.Left = 18
+        $checkbox.Left = 6
         $checkbox.Top = $top
-        $checkbox.Width = 510
+        $checkbox.Width = 500
         $checkbox.Checked = if ($CleanupItems) { @($CleanupItems) -contains $item.Id } else { $item.Default }
-        $group.Controls.Add($checkbox)
+        $cleanupScrollPanel.Controls.Add($checkbox)
         $checkboxes[$item.Id] = $checkbox
         $top += 27
     }
@@ -472,7 +480,7 @@ function Show-InstallForm {
     $customPathsGroup = New-Object System.Windows.Forms.GroupBox
     $customPathsGroup.Text = "Additional paths to delete (one per line)"
     $customPathsGroup.Left = 18
-    $customPathsGroup.Top = 440
+    $customPathsGroup.Top = 405
     $customPathsGroup.Width = 562
     $customPathsGroup.Height = 120
     $form.Controls.Add($customPathsGroup)
@@ -490,13 +498,13 @@ function Show-InstallForm {
     $bitLockerLabel = New-Object System.Windows.Forms.Label
     $bitLockerLabel.Text = "BitLocker password optional"
     $bitLockerLabel.Left = 18
-    $bitLockerLabel.Top = 570
+    $bitLockerLabel.Top = 535
     $bitLockerLabel.Width = 260
     $form.Controls.Add($bitLockerLabel)
 
     $bitLockerPasswordBox = New-Object System.Windows.Forms.TextBox
     $bitLockerPasswordBox.Left = 300
-    $bitLockerPasswordBox.Top = 568
+    $bitLockerPasswordBox.Top = 533
     $bitLockerPasswordBox.Width = 280
     $bitLockerPasswordBox.UseSystemPasswordChar = $true
     $bitLockerPasswordBox.Text = $BitLockerPassword
@@ -505,7 +513,7 @@ function Show-InstallForm {
     $defaultLogonCheck = New-Object System.Windows.Forms.CheckBox
     $defaultLogonCheck.Text = "Set trigger user as default Windows login user"
     $defaultLogonCheck.Left = 18
-    $defaultLogonCheck.Top = 605
+    $defaultLogonCheck.Top = 570
     $defaultLogonCheck.Width = 420
     $defaultLogonCheck.Checked = $SetTriggerUserAsDefaultLogon
     $form.Controls.Add($defaultLogonCheck)
@@ -513,7 +521,7 @@ function Show-InstallForm {
     $okButton = New-Object System.Windows.Forms.Button
     $okButton.Text = "Install"
     $okButton.Left = 405
-    $okButton.Top = 640
+    $okButton.Top = 605
     $okButton.Width = 82
     $okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
     $form.AcceptButton = $okButton
@@ -522,7 +530,7 @@ function Show-InstallForm {
     $cancelButton = New-Object System.Windows.Forms.Button
     $cancelButton.Text = "Cancel"
     $cancelButton.Left = 498
-    $cancelButton.Top = 640
+    $cancelButton.Top = 605
     $cancelButton.Width = 82
     $cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
     $form.CancelButton = $cancelButton
