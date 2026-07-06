@@ -38,9 +38,9 @@ If the GUI cannot open, run the console installer:
 
 ## Cleanup Sections
 
-- Chrome profiles and extensions: Stable, Beta, Dev, and Canary/SxS `User Data`.
-- Microsoft Edge profiles and extensions: Stable, Beta, Dev, and Canary/SxS `User Data`.
-- Firefox and Firefox Developer Edition profiles and extensions, including `dev-edition-default`.
+- Chrome profiles: Stable, Beta, Dev, and Canary/SxS `User Data`.
+- Microsoft Edge profiles: Stable, Beta, Dev, and Canary/SxS `User Data`.
+- Firefox and Firefox Developer Edition profiles, including `dev-edition-default`.
 - Remote Desktop Connection history and related registry keys.
 - Windows user `.ssh` folder.
 - PowerShell PSReadLine history: `ConsoleHost_history.txt`.

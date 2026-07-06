@@ -16,9 +16,9 @@ param(
 $ErrorActionPreference = "Stop"
 
 $availableItems = @(
-    [pscustomobject]@{ Id = "ChromeProfiles"; Label = "Chrome profiles and extensions"; Default = $true },
-    [pscustomobject]@{ Id = "EdgeProfiles"; Label = "Microsoft Edge profiles and extensions"; Default = $true },
-    [pscustomobject]@{ Id = "FirefoxProfiles"; Label = "Firefox / Firefox Developer Edition profiles and extensions"; Default = $true },
+    [pscustomobject]@{ Id = "ChromeProfiles"; Label = "Chrome profiles"; Default = $true },
+    [pscustomobject]@{ Id = "EdgeProfiles"; Label = "Microsoft Edge profiles"; Default = $true },
+    [pscustomobject]@{ Id = "FirefoxProfiles"; Label = "Firefox / Firefox Developer Edition profiles"; Default = $true },
     [pscustomobject]@{ Id = "RdpHistory"; Label = "Remote Desktop Connection history"; Default = $true },
     [pscustomobject]@{ Id = "WindowsSsh"; Label = "Windows user .ssh folder"; Default = $true },
     [pscustomobject]@{ Id = "PowerShellHistory"; Label = "PowerShell PSReadLine ConsoleHost_history.txt"; Default = $true },
