@@ -19,6 +19,18 @@ irm https://raw.githubusercontent.com/khoazero123/windows-cleanup-at-logon/main/
 
 This opens the installer UI and downloads the required helper scripts automatically.
 
+If you see `429: Too Many Requests`, GitHub is rate-limiting raw file downloads from your network. Use the ZIP install below instead.
+
+## Install From GitHub ZIP
+
+Run PowerShell as Administrator:
+
+```powershell
+$z="$env:TEMP\windows-cleanup-at-logon.zip";iwr https://github.com/khoazero123/windows-cleanup-at-logon/archive/refs/heads/main.zip -OutFile $z -UseBasicParsing;Expand-Archive $z $env:TEMP -Force;powershell -nop -ep bypass -f "$env:TEMP\windows-cleanup-at-logon-main\Install.ps1"
+```
+
+This opens the same installer UI. Because all scripts are already on disk, the installer does not download helper files from GitHub.
+
 ## Install From a Cloned Repo
 
 Run PowerShell as Administrator:
