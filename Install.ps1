@@ -34,6 +34,60 @@ function Test-IsAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function New-SessionStateChangeTaskTrigger {
+    param(
+        [ValidateSet(2)]
+        [int]$StateChange,
+        [string]$Delay = "PT10S"
+    )
+
+    $triggerClass = Get-CimClass `
+        -Namespace Root/Microsoft/Windows/TaskScheduler `
+        -ClassName MSFT_TaskSessionStateChangeTrigger
+    $properties = @{
+        StateChange = $StateChange
+        Enabled     = $true
+    }
+    if ($Delay) {
+        $properties.Delay = $Delay
+    }
+
+    return New-CimInstance -CimClass $triggerClass -ClientOnly -Property $properties
+}
+
+function New-EventLogTaskTrigger {
+    param(
+        [string]$Subscription,
+        [string]$Delay = "PT5S"
+    )
+
+    $triggerClass = Get-CimClass `
+        -Namespace Root/Microsoft/Windows/TaskScheduler `
+        -ClassName MSFT_TaskEventTrigger
+    $properties = @{
+        Subscription = $Subscription
+        Enabled      = $true
+    }
+    if ($Delay) {
+        $properties.Delay = $Delay
+    }
+
+    return New-CimInstance -CimClass $triggerClass -ClientOnly -Property $properties
+}
+
+function Set-AutomaticRestartSignOnDisabled {
+    param([bool]$Disabled)
+
+    $policyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    if (-not (Test-Path -LiteralPath $policyPath)) {
+        New-Item -Path $policyPath -Force | Out-Null
+    }
+
+    if ($Disabled) {
+        New-ItemProperty -LiteralPath $policyPath -Name "DisableAutomaticRestartSignOn" -PropertyType DWord -Value 1 -Force | Out-Null
+    }
+}
+
 function Normalize-CleanupItems {
     param([string[]]$Items)
 
@@ -635,17 +689,18 @@ finally {
 }
 
 $config = [ordered]@{
-    TriggerUser                  = $TriggerUser
-    TargetUser                   = $TargetUser
-    CleanupItems                 = @($CleanupItems)
-    CustomPaths                  = @($CustomPaths)
-    BitLockerPassword            = $BitLockerPassword
-    WslDistro                    = $WslDistro
-    WslUser                      = $WslUser
-    WebhookUrl                   = $WebhookUrl
-    LogPath                      = $cleanupLogPath
-    SetTriggerUserAsDefaultLogon = [bool]$SetTriggerUserAsDefaultLogon
-    SavedAt                      = (Get-Date).ToString("o")
+    TriggerUser                       = $TriggerUser
+    TargetUser                        = $TargetUser
+    CleanupItems                      = @($CleanupItems)
+    CustomPaths                       = @($CustomPaths)
+    BitLockerPassword                 = $BitLockerPassword
+    WslDistro                         = $WslDistro
+    WslUser                           = $WslUser
+    WebhookUrl                        = $WebhookUrl
+    LogPath                           = $cleanupLogPath
+    SetTriggerUserAsDefaultLogon      = [bool]$SetTriggerUserAsDefaultLogon
+    DisabledAutomaticRestartSignOn    = [bool]$SetTriggerUserAsDefaultLogon
+    SavedAt                           = (Get-Date).ToString("o")
 }
 $config | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
 
@@ -665,17 +720,32 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 if ($SetTriggerUserAsDefaultLogon) {
+    # Prevent Windows from auto-signing the last interactive user (usually admin)
+    # after reboot — that feature restores admin as the lock/login default.
+    Set-AutomaticRestartSignOnDisabled -Disabled $true
+
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $defaultLogonScript -DefaultUser $TriggerUser -LogPath $defaultLogonLogPath
 
     $defaultArgument = "-NoProfile -ExecutionPolicy Bypass -File `"$defaultLogonScript`" -DefaultUser `"$TriggerUser`" -LogPath `"$defaultLogonLogPath`""
     $defaultAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $defaultArgument
     $startupTrigger = New-ScheduledTaskTrigger -AtStartup
+    $startupRetryTrigger = New-ScheduledTaskTrigger -AtStartup
+    $startupRetryTrigger.Delay = "PT45S"
     $anyLogonTrigger = New-ScheduledTaskTrigger -AtLogOn
+    # Re-apply soon after any login overwrites LastLoggedOn* back to that user.
+    $anyLogonTrigger.Delay = "PT30S"
+    # Console disconnect only — do not use session lock.
+    $sessionDisconnectTrigger = New-SessionStateChangeTaskTrigger -StateChange 2 -Delay "PT10S"
+    # Re-apply right before reboot/shutdown so the next welcome screen keeps the trigger user.
+    $shutdownEventSubscription = @"
+<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name='User32'] and (EventID=1074)]]</Select></Query></QueryList>
+"@
+    $shutdownTrigger = New-EventLogTaskTrigger -Subscription $shutdownEventSubscription -Delay "PT0S"
 
     Register-ScheduledTask `
         -TaskName $DefaultLogonTaskName `
         -Action $defaultAction `
-        -Trigger @($startupTrigger, $anyLogonTrigger) `
+        -Trigger @($startupTrigger, $startupRetryTrigger, $anyLogonTrigger, $sessionDisconnectTrigger, $shutdownTrigger) `
         -Principal $principal `
         -Settings $settings `
         -Description "Keeps $TriggerUser selected as the default Windows LogonUI user." `
