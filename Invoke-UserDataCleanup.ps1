@@ -336,6 +336,159 @@ function Remove-PathSafe {
     }
 }
 
+function Clear-TargetCredentialManager {
+    param(
+        [string]$UserName,
+        [string]$ProfilePath
+    )
+
+    $credentialPaths = @(
+        (Join-Path $ProfilePath "AppData\Local\Microsoft\Credentials"),
+        (Join-Path $ProfilePath "AppData\Roaming\Microsoft\Credentials"),
+        (Join-Path $ProfilePath "AppData\Local\Microsoft\Vault"),
+        (Join-Path $ProfilePath "AppData\Roaming\Microsoft\Vault")
+    )
+
+    if ($DryRun) {
+        Write-Log "DryRun clear Credential Manager for user: $UserName"
+        Add-CleanupResult -Section "CredentialManager" -Target $UserName -Status "dry_run" -Message "Credential Manager would be cleared via cmdkey and vault folders"
+        foreach ($path in $credentialPaths | Select-Object -Unique) {
+            if (Test-Path -LiteralPath $path) {
+                Write-Log "DryRun remove path: $path"
+                Add-CleanupResult -Section "CredentialManager" -Target $path -Status "dry_run" -Message "Path would be removed"
+            }
+            else {
+                Write-Log "Skip missing path: $path"
+                Add-CleanupResult -Section "CredentialManager" -Target $path -Status "skipped_missing" -Message "Path does not exist"
+            }
+        }
+        return
+    }
+
+    # Live session credentials survive folder deletes while the target user is logged on.
+    # Clear them with cmdkey/PasswordVault in that user's interactive session when possible.
+    $taskName = "WindowsCleanupAtLogon-ClearCredentialManager"
+    $workDir = Split-Path -Parent $LogPath
+    if (-not $workDir) {
+        $workDir = $env:TEMP
+    }
+    if (-not (Test-Path -LiteralPath $workDir)) {
+        New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+    }
+
+    $helperScript = Join-Path $workDir "clear-credential-manager.ps1"
+    $helperLog = Join-Path $workDir "clear-credential-manager.log"
+    $helperLogLiteral = $helperLog.Replace("'", "''")
+    $helperScriptContent = @"
+`$ErrorActionPreference = "Continue"
+`$logPath = '$helperLogLiteral'
+function Write-HelperLog([string]`$Message) {
+    if (`$logPath) {
+        Add-Content -LiteralPath `$logPath -Value `$Message -Encoding UTF8
+    }
+}
+
+`$deleted = 0
+`$failed = 0
+`$targets = @()
+cmdkey /list 2>`$null | ForEach-Object {
+    if (`$_ -match "Target:\s*(.+)\s*`$") {
+        `$targets += `$matches[1].Trim()
+    }
+}
+
+Write-HelperLog "cmdkey targets=`$(`$targets.Count)"
+foreach (`$target in `$targets) {
+    `$output = cmdkey /delete:"`$target" 2>&1 | Out-String
+    if (`$LASTEXITCODE -eq 0 -or `$output -match "deleted successfully") {
+        `$deleted++
+        Write-HelperLog "deleted:`$target"
+    }
+    else {
+        `$failed++
+        Write-HelperLog "failed:`$target;`$(`$output.Trim())"
+    }
+}
+
+try {
+    [void][Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, ContentType = WindowsRuntime]
+    `$vault = New-Object Windows.Security.Credentials.PasswordVault
+    foreach (`$cred in @(`$vault.RetrieveAll())) {
+        try {
+            `$cred.RetrievePassword()
+            `$vault.Remove(`$cred)
+            `$deleted++
+            Write-HelperLog ("deleted-vault:{0}|{1}" -f `$cred.Resource, `$cred.UserName)
+        }
+        catch {
+            `$failed++
+            Write-HelperLog ("failed-vault:{0}|{1};{2}" -f `$cred.Resource, `$cred.UserName, `$_.Exception.Message)
+        }
+    }
+}
+catch {
+    Write-HelperLog "password-vault-skip:`$(`$_.Exception.Message)"
+}
+
+Write-HelperLog "summary:deleted=`$deleted;failed=`$failed"
+"@
+
+    try {
+        if (Test-Path -LiteralPath $helperLog) {
+            Remove-Item -LiteralPath $helperLog -Force -ErrorAction SilentlyContinue
+        }
+        Set-Content -LiteralPath $helperScript -Value $helperScriptContent -Encoding UTF8
+
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+        $action = New-ScheduledTaskAction `
+            -Execute "powershell.exe" `
+            -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$helperScript`""
+        $principal = New-ScheduledTaskPrincipal -UserId $UserName -LogonType Interactive -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -Compatibility Win8 -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask `
+            -TaskName $taskName `
+            -Action $action `
+            -Principal $principal `
+            -Settings $settings `
+            -Force | Out-Null
+
+        Start-ScheduledTask -TaskName $taskName
+        $deadline = (Get-Date).AddSeconds(90)
+        do {
+            Start-Sleep -Milliseconds 400
+            $state = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State
+        } while ($state -eq "Running" -and (Get-Date) -lt $deadline)
+
+        $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
+        $taskResult = if ($taskInfo) { [int]$taskInfo.LastTaskResult } else { -1 }
+        if ($taskResult -eq 0) {
+            Write-Log "Cleared Credential Manager via interactive session for user: $UserName"
+            Add-CleanupResult -Section "CredentialManager" -Target $UserName -Status "removed" -Message "Cleared via cmdkey/PasswordVault in user session"
+            if (Test-Path -LiteralPath $helperLog) {
+                Get-Content -LiteralPath $helperLog -ErrorAction SilentlyContinue | ForEach-Object { Write-Log "CredentialManager helper: $_" }
+            }
+        }
+        else {
+            Write-Log "Credential Manager session clear skipped/failed for ${UserName}; taskResult=$taskResult (user may be signed out)"
+            Add-CleanupResult -Section "CredentialManager" -Target $UserName -Status "skipped" -Message "Interactive clear failed or user not logged on (taskResult=$taskResult)"
+        }
+    }
+    catch {
+        Write-Log "Credential Manager session clear failed for ${UserName}: $($_.Exception.Message)"
+        Add-CleanupResult -Section "CredentialManager" -Target $UserName -Status "failed" -Message $_.Exception.Message
+    }
+    finally {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $helperScript -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $helperLog -Force -ErrorAction SilentlyContinue
+    }
+
+    foreach ($path in $credentialPaths | Select-Object -Unique) {
+        Remove-PathSafe -Path $path -Section "CredentialManager"
+    }
+}
+
 function Stop-TargetBrowserProcesses {
     param(
         [string]$UserName,
@@ -626,16 +779,7 @@ if (Has-CleanupItem "RdpHistory") {
 }
 
 if (Has-CleanupItem "CredentialManager") {
-    # Windows Credentials: Credentials blobs; Web Credentials: Credential Locker / Vault.
-    $credentialPaths = @(
-        (Join-Path $profilePath "AppData\Local\Microsoft\Credentials"),
-        (Join-Path $profilePath "AppData\Roaming\Microsoft\Credentials"),
-        (Join-Path $profilePath "AppData\Local\Microsoft\Vault"),
-        (Join-Path $profilePath "AppData\Roaming\Microsoft\Vault")
-    )
-    foreach ($path in $credentialPaths | Select-Object -Unique) {
-        Remove-PathSafe -Path $path -Section "CredentialManager"
-    }
+    Clear-TargetCredentialManager -UserName $TargetUser -ProfilePath $profilePath
 }
 
 if (Has-CleanupItem "WindowsSsh") {

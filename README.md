@@ -66,7 +66,7 @@ When you run the installer again on the same machine, it loads the previous sett
 - Brave profiles: Stable, Beta, and Nightly `User Data`.
 - Firefox and Firefox Developer Edition profiles, including `dev-edition-default`.
 - Remote Desktop Connection history and related registry keys.
-- Credential Manager: Web Credentials (Vault) and Windows Credentials blobs under the target user's profile.
+- Credential Manager: clears Windows Credentials / Web Credentials via `cmdkey` (and PasswordVault) in the target user's session when logged on, then removes Credentials/Vault folders under the profile.
 - Windows user `.ssh` folder.
 - PowerShell PSReadLine history: `ConsoleHost_history.txt`.
 - WSL `.ssh`: `\\wsl.localhost\<distro>\home\<user>\.ssh` (falls back to `\\wsl$\<distro>\...` on older Windows 10 / WSL setups).
