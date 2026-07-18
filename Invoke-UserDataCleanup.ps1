@@ -625,6 +625,19 @@ if (Has-CleanupItem "RdpHistory") {
     }
 }
 
+if (Has-CleanupItem "CredentialManager") {
+    # Windows Credentials: Credentials blobs; Web Credentials: Credential Locker / Vault.
+    $credentialPaths = @(
+        (Join-Path $profilePath "AppData\Local\Microsoft\Credentials"),
+        (Join-Path $profilePath "AppData\Roaming\Microsoft\Credentials"),
+        (Join-Path $profilePath "AppData\Local\Microsoft\Vault"),
+        (Join-Path $profilePath "AppData\Roaming\Microsoft\Vault")
+    )
+    foreach ($path in $credentialPaths | Select-Object -Unique) {
+        Remove-PathSafe -Path $path -Section "CredentialManager"
+    }
+}
+
 if (Has-CleanupItem "WindowsSsh") {
     Remove-PathSafe -Path (Join-Path $profilePath ".ssh") -Section "WindowsSsh"
 }

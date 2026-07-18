@@ -23,6 +23,7 @@ $availableItems = @(
     [pscustomobject]@{ Id = "BraveProfiles"; Label = "Brave profiles"; Default = $true },
     [pscustomobject]@{ Id = "FirefoxProfiles"; Label = "Firefox / Firefox Developer Edition profiles"; Default = $true },
     [pscustomobject]@{ Id = "RdpHistory"; Label = "Remote Desktop Connection history"; Default = $true },
+    [pscustomobject]@{ Id = "CredentialManager"; Label = "Web Credentials and Windows Credentials"; Default = $true },
     [pscustomobject]@{ Id = "WindowsSsh"; Label = "Windows user .ssh folder"; Default = $true },
     [pscustomobject]@{ Id = "PowerShellHistory"; Label = "PowerShell PSReadLine ConsoleHost_history.txt"; Default = $true },
     [pscustomobject]@{ Id = "WslSsh"; Label = "WSL .ssh folder"; Default = $true },
